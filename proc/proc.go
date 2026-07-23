@@ -26,7 +26,9 @@ func OpenProc(name string) (*Proc, error) {
 	}
 	slog.Debug("found pid", "pid", p.pid)
 
-	p.handle, err = windows.OpenProcess(windows.PROCESS_ALL_ACCESS, false, p.pid)
+	const access = windows.PROCESS_VM_READ | windows.PROCESS_VM_WRITE | windows.PROCESS_VM_OPERATION |
+		windows.PROCESS_CREATE_THREAD | windows.PROCESS_QUERY_INFORMATION
+	p.handle, err = windows.OpenProcess(access, false, p.pid)
 	if err != nil {
 		return nil, fmt.Errorf("error opening process: %v", err)
 	}
@@ -49,15 +51,22 @@ func getProcessID(processName string) (uint32, error) {
 	var entry windows.ProcessEntry32
 	entry.Size = uint32(unsafe.Sizeof(entry))
 
-	for {
-		err := windows.Process32Next(handle, &entry)
-		if err != nil {
-			return 0, err
-		}
+	if err := windows.Process32First(handle, &entry); err != nil {
+		return 0, err
+	}
 
+	for {
 		name := windows.UTF16ToString(entry.ExeFile[:])
 		if strings.EqualFold(name, processName) {
 			return entry.ProcessID, nil
+		}
+
+		err := windows.Process32Next(handle, &entry)
+		if err != nil {
+			if err == windows.ERROR_NO_MORE_FILES {
+				return 0, fmt.Errorf("process %q not found", processName)
+			}
+			return 0, err
 		}
 	}
 }
@@ -72,15 +81,22 @@ func (p *Proc) GetModuleBase(moduleName string) (uintptr, error) {
 	var entry windows.ModuleEntry32
 	entry.Size = uint32(unsafe.Sizeof(entry))
 
-	for {
-		err := windows.Module32Next(handle, &entry)
-		if err != nil {
-			return 0, err
-		}
+	if err := windows.Module32First(handle, &entry); err != nil {
+		return 0, err
+	}
 
+	for {
 		name := windows.UTF16ToString(entry.Module[:])
 		if strings.EqualFold(name, moduleName) {
 			return entry.ModBaseAddr, nil
+		}
+
+		err := windows.Module32Next(handle, &entry)
+		if err != nil {
+			if err == windows.ERROR_NO_MORE_FILES {
+				return 0, fmt.Errorf("module %q not found", moduleName)
+			}
+			return 0, err
 		}
 	}
 }
