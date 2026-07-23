@@ -27,7 +27,8 @@ func setupLogging(debug bool) {
 func main() {
 	debug := flag.Bool("d", false, "enable debug logging")
 	procName := flag.String("proc", "", "process name")
-	dllPath := flag.String("dll", "", "path to the dll to inject")
+	dllPath := flag.String("dll", "", "path to the dll to inject (or eject, with -eject)")
+	eject := flag.Bool("eject", false, "eject the dll instead of injecting it")
 	flag.Parse()
 
 	setupLogging(*debug)
@@ -35,16 +36,6 @@ func main() {
 	if *procName == "" || *dllPath == "" {
 		flag.Usage()
 		os.Exit(2)
-	}
-
-	absDLLPath, err := filepath.Abs(*dllPath)
-	if err != nil {
-		slog.Error("error resolving dll path", tint.Err(err))
-		os.Exit(1)
-	}
-	if _, err := os.Stat(absDLLPath); err != nil {
-		slog.Error("dll not found", tint.Err(err))
-		os.Exit(1)
 	}
 
 	p, err := proc.OpenProc(*procName)
@@ -60,8 +51,26 @@ func main() {
 		}
 	}()
 
-	err = p.InjectDLL(absDLLPath)
+	if *eject {
+		if err := p.EjectDLLByName(filepath.Base(*dllPath)); err != nil {
+			slog.Error("error ejecting dll", tint.Err(err))
+			os.Exit(1)
+		}
+		slog.Info("ejected dll successfully")
+		return
+	}
+
+	absDLLPath, err := filepath.Abs(*dllPath)
 	if err != nil {
+		slog.Error("error resolving dll path", tint.Err(err))
+		os.Exit(1)
+	}
+	if _, err := os.Stat(absDLLPath); err != nil {
+		slog.Error("dll not found", tint.Err(err))
+		os.Exit(1)
+	}
+
+	if err := p.InjectDLL(absDLLPath); err != nil {
 		slog.Error("error injecting dll", tint.Err(err))
 		os.Exit(1)
 	}

@@ -3,12 +3,17 @@ package proc
 import (
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
 func (p *Proc) InjectDLL(dllPath string) error {
+	if err := checkArchMatch(p.handle, dllPath); err != nil {
+		return err
+	}
+
 	kernel32 := windows.NewLazySystemDLL("kernel32.dll")
 
 	pathUTF16, err := windows.UTF16FromString(dllPath)
@@ -68,15 +73,24 @@ func (p *Proc) InjectDLL(dllPath string) error {
 	}
 	slog.Debug("remote thread finished", "event", event)
 
-	exitCode, err := getExitCodeThread(kernel32, remoteThreadHandle)
-	if err != nil {
-		return err
-	}
-	if exitCode == 0 {
-		return fmt.Errorf("LoadLibraryW failed in remote process")
+	// GetExitCodeThread only reports a 32-bit value, but LoadLibraryW
+	// returns a 64-bit HMODULE on x64 targets, so the exit code can't be
+	// trusted to reflect success. Check the module list instead.
+	if _, err := p.GetModuleBase(filepath.Base(dllPath)); err != nil {
+		return fmt.Errorf("LoadLibraryW failed in remote process: %w", err)
 	}
 
 	return nil
+}
+
+// EjectDLLByName looks up a loaded module by name and frees it, so callers
+// don't need to track the HMODULE returned at injection time.
+func (p *Proc) EjectDLLByName(moduleName string) error {
+	base, err := p.GetModuleBase(moduleName)
+	if err != nil {
+		return fmt.Errorf("error finding loaded module: %w", err)
+	}
+	return p.EjectDLL(windows.Handle(base))
 }
 
 func (p *Proc) EjectDLL(handle windows.Handle) error {
